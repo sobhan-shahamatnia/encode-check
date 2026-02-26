@@ -7,6 +7,12 @@ import os
 import sys
 import subprocess
 
+# Ensure the console can handle the full Unicode range (arrow chars etc.)
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 # ── ANSI helpers ──────────────────────────────────────────────────────────────
 
 RESET   = "\033[0m"
@@ -32,6 +38,7 @@ HERE       = os.path.dirname(os.path.abspath(__file__))
 PYTHON     = sys.executable
 CHECKFMT   = os.path.join(HERE, "checkformat.py")
 GIT_HIST   = os.path.join(HERE, "git_encoding_history.py")
+CONV_ENC   = os.path.join(HERE, "convert_encoding.py")
 
 # ── Menu definition ───────────────────────────────────────────────────────────
 
@@ -47,8 +54,8 @@ MENU_ITEMS = [
         "usage":  'python checkformat.py <folder> -e .txt .cs .razor [.ext ...]',
         "example":'python checkformat.py "C:\\MyProject" -e .cs .razor .txt',
         "args": [
-            ("folder",     "Path to the root folder to scan (required)"),
-            ("-e / --ext", "One or more file extensions, e.g.  .txt .cs .razor"),
+            ("folder",     "Path to the root folder to scan (required)",              "required"),
+            ("-e / --ext", "One or more file extensions, e.g.  .txt .cs .razor",     "optional"),
         ],
     },
     {
@@ -64,9 +71,26 @@ MENU_ITEMS = [
         "usage":  'python git_encoding_history.py <repo> <file> [-b <branch>]',
         "example":'python git_encoding_history.py https://github.com/owner/repo src/app.cs -b main',
         "args": [
-            ("repo",        "Local folder path  OR  remote URL of the repository"),
-            ("file",        "File path relative to the repository root"),
-            ("-b / --branch","Branch, tag, or commit SHA to walk  (default: HEAD)"),
+            ("repo",         "Local folder path  OR  remote URL of the repository",  "required"),
+            ("file",         "File path relative to the repository root",              "required"),
+            ("-b / --branch","Branch, tag, or commit SHA to walk  (default: HEAD)",   "optional"),
+        ],
+    },
+    {
+        "key":    "3",
+        "title":  "File Encoding Converter",
+        "script": CONV_ENC,
+        "desc": (
+            "Detects the encoding of a single local file and optionally converts\n"
+            "    it to a different encoding (e.g. Windows-1252 \u2192 UTF-8) without\n"
+            "    corrupting any characters.  A .bak backup is created by default."
+        ),
+        "usage":  'python convert_encoding.py <file> [--to <encoding>] [--no-backup]',
+        "example":'python convert_encoding.py "C:\\Project\\app.cs" --to utf-8',
+        "args": [
+            ("file",        "Path to the local file to inspect or convert",          "required"),
+            ("--to",        "Target encoding, e.g. utf-8 / utf-8-bom / windows-1252 (leave blank to detect only)", "optional"),
+            ("--no-backup", "Skip .bak backup before overwriting? (yes / leave blank)", "flag"),
         ],
     },
 ]
@@ -104,7 +128,8 @@ def print_item_detail(item: dict):
     print(f"\n  {bold('Usage')}")
     print(f"    {yellow(item['usage'])}\n")
     print(f"  {bold('Arguments')}")
-    for arg, desc in item["args"]:
+    for arg_tuple in item["args"]:
+        arg, desc = arg_tuple[0], arg_tuple[1]
         print(f"    {green(f'{arg:<18}')}  {desc}")
     print(f"\n  {bold('Example')}")
     print(f"    {dim(item['example'])}\n")
@@ -114,23 +139,32 @@ def prompt_and_run(item: dict):
     """Show argument prompts, build the command, and run the chosen script."""
     print_item_detail(item)
 
-    # Dynamically ask for each argument
     collected: list[str] = []
 
-    for arg, desc in item["args"]:
-        is_optional = arg.strip().startswith("-")
+    for arg_tuple in item["args"]:
+        # 3-tuple: (arg, desc, kind)   kind = required | optional | flag
+        arg, desc = arg_tuple[0], arg_tuple[1]
+        kind      = arg_tuple[2] if len(arg_tuple) > 2 else (
+            "required" if not arg.strip().startswith("-") else "optional"
+        )
         hint = dim(f"  ({desc})")
-        label_raw = arg.split("/")[0].strip().lstrip("-")
 
-        if is_optional:
-            val = input(f"\n  {yellow(arg)} {hint}\n  Leave blank to skip → ").strip()
+        if kind == "flag":
+            # Boolean flag — add just the flag itself when user types yes
+            val = input(f"\n  {yellow(arg)} {hint}\n  yes / leave blank → ").strip().lower()
+            if val in ("yes", "y", "1", "true"):
+                flag = arg.split("/")[0].strip()
+                collected.append(flag)
+
+        elif kind == "optional":
+            val = input(f"\n  {yellow(arg)} {hint}\n  Leave blank to skip → ").strip().strip('"\'')
             if val:
-                flag = arg.split("/")[0].strip()   # e.g. "-e" or "-b"
-                # -e can take multiple values; split on spaces
+                flag = arg.split("/")[0].strip()   # e.g. "-e" or "--to" or "-b"
                 collected += [flag] + val.split()
-        else:
+
+        else:  # required positional
             while True:
-                val = input(f"\n  {bold(arg)} {hint}\n  → ").strip()
+                val = input(f"\n  {bold(arg)} {hint}\n  → ").strip().strip('"\'')
                 if val:
                     break
                 print(red("  This argument is required."))

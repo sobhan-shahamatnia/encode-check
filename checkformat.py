@@ -18,9 +18,9 @@ import sys
 import argparse
 
 try:
-    import chardet
+    from encoding_utils import detect_file
 except ImportError:
-    print("ERROR: 'chardet' is not installed. Run: pip install chardet")
+    print("ERROR: encoding_utils.py not found — place it in the same folder.")
     sys.exit(1)
 
 
@@ -37,14 +37,8 @@ HEADER  = f"{'File':<{COL_PATH}}  {'Encoding':<{COL_ENC}}  {'Confidence':>{COL_C
 def detect_encoding(filepath: str) -> tuple[str, float]:
     """Return (encoding, confidence) for the given file."""
     try:
-        with open(filepath, "rb") as f:
-            raw = f.read()
-        if not raw:
-            return "empty file", 0.0
-        result = chardet.detect(raw)
-        encoding   = result.get("encoding") or "unknown"
-        confidence = result.get("confidence") or 0.0
-        return encoding, confidence
+        info = detect_file(filepath)
+        return info.human, info.confidence
     except OSError as exc:
         return f"ERROR: {exc}", 0.0
 

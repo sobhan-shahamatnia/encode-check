@@ -31,10 +31,10 @@ import shutil
 import tempfile
 
 try:
-    import chardet
+    from encoding_utils import detect_raw
 except ImportError:
-    print("ERROR: 'chardet' is not installed.  Run: pip install chardet")
-    sys.exit(1)
+    print("ERROR: encoding_utils.py not found — place it in the same folder.")
+    import sys; sys.exit(1)
 
 
 # ── ANSI helpers ──────────────────────────────────────────────────────────────
@@ -158,57 +158,7 @@ def get_file_bytes(repo: str, commit_hash: str, file_path: str) -> bytes | None:
     return result.stdout
 
 
-_BOM_MAP = {
-    b"\xff\xfe\x00\x00": ("UTF-32 LE (BOM)", 1.0),
-    b"\x00\x00\xfe\xff": ("UTF-32 BE (BOM)", 1.0),
-    b"\xef\xbb\xbf":     ("UTF-8 (BOM)",     1.0),
-    b"\xff\xfe":         ("UTF-16 LE (BOM)", 1.0),
-    b"\xfe\xff":         ("UTF-16 BE (BOM)", 1.0),
-}
-
-_NORMALISE = {
-    "utf-8-sig":       "UTF-8 (BOM)",
-    "utf-8":           "UTF-8",
-    "ascii":           "ASCII",
-    "utf-16":          "UTF-16",
-    "utf-16-le":       "UTF-16 LE",
-    "utf-16-be":       "UTF-16 BE",
-    "utf-32":          "UTF-32",
-    "utf-32-le":       "UTF-32 LE",
-    "utf-32-be":       "UTF-32 BE",
-    "windows-1252":    "Windows-1252",
-    "windows-1250":    "Windows-1250",
-    "windows-1251":    "Windows-1251",
-    "iso-8859-1":      "ISO-8859-1",
-    "iso-8859-2":      "ISO-8859-2",
-    "shift_jis":       "Shift-JIS",
-    "euc-jp":          "EUC-JP",
-    "euc-kr":          "EUC-KR",
-    "gb2312":          "GB2312",
-    "gbk":             "GBK",
-}
-
-
-def detect_encoding(raw: bytes) -> tuple[str, float]:
-    """Return (human-readable encoding name, confidence) for raw bytes."""
-    if not raw:
-        return "(empty)", 0.0
-
-    # 1. Explicit BOM check — most reliable
-    for bom_bytes, result in _BOM_MAP.items():
-        if raw.startswith(bom_bytes):
-            return result
-
-    # 2. chardet statistical detection
-    detected = chardet.detect(raw)
-    enc  = (detected.get("encoding") or "unknown").lower()
-    conf = detected.get("confidence") or 0.0
-
-    human = _NORMALISE.get(enc, enc.upper() if enc != "unknown" else "Unknown")
-    return human, conf
-
-
-# ── Formatting ────────────────────────────────────────────────────────────────
+# ── Formatting ─────────────────────────────────────────────────────────────────
 
 def truncate(text: str, width: int) -> str:
     if len(text) > width:
@@ -354,7 +304,8 @@ def main() -> None:
                 encoding = "(deleted)"
                 conf     = 0.0
             else:
-                encoding, conf = detect_encoding(raw)
+                enc_info        = detect_raw(raw)
+                encoding, conf  = enc_info.human, enc_info.confidence
 
             first   = idx == 0
             changed = (prev_encoding is not None) and (encoding != prev_encoding)
